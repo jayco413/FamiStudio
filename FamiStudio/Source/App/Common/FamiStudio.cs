@@ -46,6 +46,7 @@ namespace FamiStudio
         private int realTimeLastFrame = -1;
         private Note realTimeNote = null;
         private bool recordingStartedSong = false;
+        private bool recordingWaitsForNote = false;
         private bool previewDPCMIsSource = false;
         private bool metronome = false;
         private bool palPlayback = false;
@@ -1605,9 +1606,21 @@ namespace FamiStudio
             if (allowRecording && recordingMode)
             {
                 if (IsPlaying)
-                    BeginRealTimeNote(note);
+                {
+                    BeginRealTimeNote(note, songPlayer.PlayPosition);
+                }
+                else if (recordingWaitsForNote)
+                {
+                    // First note of a real-time recording, start the song right here.
+                    var frame = songPlayer.PlayPosition;
+                    PlaySong();
+                    recordingStartedSong = true;
+                    BeginRealTimeNote(note, frame);
+                }
                 else
+                {
                     PianoRoll.RecordNote(note);
+                }
             }
 
             stopInstrumentTimer = stopDelay;
@@ -1615,9 +1628,8 @@ namespace FamiStudio
 
         // Real-time recording : when recording while the song is playing, notes are
         // placed at the play position and last until the key is released.
-        private void BeginRealTimeNote(Note note)
+        private void BeginRealTimeNote(Note note, int frame)
         {
-            var frame = songPlayer.PlayPosition;
             CommitRealTimeNote(frame);
             realTimeNote = note.Clone();
             realTimeNoteStart = frame;
@@ -1665,7 +1677,7 @@ namespace FamiStudio
                 {
                     var frame = songPlayer.PlayPosition;
 
-                    if (frame < realTimeLastFrame)
+                    if (frame < realTimeLastFrame - 2)
                     {
                         // Song looped, end the note at the end of the song.
                         CommitRealTimeNote(song.GetPatternStartAbsoluteNoteIndex(song.Length));
@@ -2187,6 +2199,8 @@ namespace FamiStudio
 
         public void PlaySong()
         {
+            recordingWaitsForNote = false;
+
             // Playing while recording does real-time recording.
             if (songPlayer != null && !songPlayer.IsPlaying)
             {
@@ -2292,16 +2306,11 @@ namespace FamiStudio
             qwertyPiano = Platform.IsDesktop;
             MobilePianoVisible = Platform.IsMobile;
 
-            // Real-time recording : start the song if needed, stop it when recording stops.
+            // Real-time recording : the song starts on the first note played, and stops when recording stops.
             if (stepRecording)
-            {
                 StopSong();
-            }
-            else if (Platform.IsDesktop && !IsPlaying)
-            {
-                PlaySong();
-                recordingStartedSong = true;
-            }
+            else
+                recordingWaitsForNote = Platform.IsDesktop && !IsPlaying;
 
             MarkEverythingDirty();
         }
@@ -2312,6 +2321,7 @@ namespace FamiStudio
             {
                 EndRealTimeNote();
                 recordingMode = false;
+                recordingWaitsForNote = false;
                 lastRecordingKeyDown = -1;
                 StopInstrument();
 
