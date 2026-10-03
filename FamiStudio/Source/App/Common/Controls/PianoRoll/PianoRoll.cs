@@ -5626,11 +5626,27 @@ namespace FamiStudio
             }
         }
 
-        private int SnapNoteNearest(int absoluteNoteIndex)
+        // Real-time recording quantizes to the nearest note (row), not to the snap resolution, which
+        // is usually a full beat and would destroy the rhythm. Disabling snapping records exact frames.
+        private int QuantizeRealTimeNote(int absoluteNoteIndex)
         {
-            var lo = SnapNote(absoluteNoteIndex);
-            var hi = SnapNote(absoluteNoteIndex, true);
-            return absoluteNoteIndex - lo <= hi - absoluteNoteIndex ? lo : hi;
+            if (!SnapEnabled || SnapTemporarelyDisabled || Song.UsesFamiTrackerTempo || absoluteNoteIndex < 0)
+                return absoluteNoteIndex;
+
+            var location = NoteLocation.FromAbsoluteNoteIndex(Song, absoluteNoteIndex);
+
+            if (location.PatternIndex >= Song.Length)
+                return absoluteNoteIndex;
+
+            var noteLength = Song.GetPatternNoteLength(location.PatternIndex);
+            if (noteLength <= 1)
+                return absoluteNoteIndex;
+
+            var noteIdx = location.NoteIndex / noteLength * noteLength;
+            if ((location.NoteIndex - noteIdx) * 2 >= noteLength)
+                noteIdx += noteLength;
+
+            return Song.GetPatternStartAbsoluteNoteIndex(location.PatternIndex, noteIdx);
         }
 
         // Real-time recording, a note that was held from startFrame to endFrame while the song was playing.
@@ -5641,11 +5657,15 @@ namespace FamiStudio
 
             var songEnd = Song.GetPatternStartAbsoluteNoteIndex(Song.Length);
 
-            startFrame = SnapNoteNearest(startFrame);
-            endFrame   = SnapNoteNearest(endFrame);
+            startFrame = QuantizeRealTimeNote(startFrame);
+            endFrame   = QuantizeRealTimeNote(endFrame);
 
+            if (startFrame < 0 || startFrame >= songEnd)
+                return;
+
+            // Shortest note is one note (row) long.
             if (endFrame <= startFrame)
-                endFrame = Math.Max(SnapNote(startFrame, true), startFrame + 1);
+                endFrame = Math.Max(QuantizeRealTimeNote(startFrame + Song.GetPatternNoteLength(Song.PatternIndexFromAbsoluteNoteIndex(startFrame))), startFrame + 1);
 
             endFrame = Math.Min(endFrame, songEnd);
 
