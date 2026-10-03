@@ -45,6 +45,7 @@ namespace FamiStudio
         private int realTimeNoteStart = -1;
         private int realTimeLastFrame = -1;
         private Note realTimeNote = null;
+        private bool recordingStartedSong = false;
         private bool previewDPCMIsSource = false;
         private bool metronome = false;
         private bool palPlayback = false;
@@ -1646,6 +1647,13 @@ namespace FamiStudio
 
         private void UpdateRealTimeNote()
         {
+            // Song stopped by itself during real-time recording, stop recording too.
+            if (recordingStartedSong && !IsPlaying && !IsSeeking)
+            {
+                StopRecording();
+                return;
+            }
+
             if (realTimeNote != null)
             {
                 if (!IsPlaying)
@@ -1976,6 +1984,14 @@ namespace FamiStudio
             {
                 ToggleRecording();
             }
+            else if (e.Key == Keys.Enter && e.Modifiers == ModifierKeys.Shift)
+            {
+                // Shift+Enter : step recording (one note per key press, song stopped).
+                if (recordingMode)
+                    StopRecording();
+                else
+                    StartRecording(true);
+            }
             else if (Settings.FollowModeShortcut.Matches(e))
             {
                 followMode = !followMode;
@@ -2209,7 +2225,10 @@ namespace FamiStudio
         public void TogglePlaySong()
         {
             if (IsPlaying)
+            {
                 StopSong();
+                StopRecording();
+            }
             else
                 PlaySong();
         }
@@ -2266,12 +2285,24 @@ namespace FamiStudio
             }
         }
 
-        public void StartRecording()
+        public void StartRecording(bool stepRecording = false)
         {
             Debug.Assert(!recordingMode);
             recordingMode = true;
             qwertyPiano = Platform.IsDesktop;
             MobilePianoVisible = Platform.IsMobile;
+
+            // Real-time recording : start the song if needed, stop it when recording stops.
+            if (stepRecording)
+            {
+                StopSong();
+            }
+            else if (Platform.IsDesktop && !IsPlaying)
+            {
+                PlaySong();
+                recordingStartedSong = true;
+            }
+
             MarkEverythingDirty();
         }
 
@@ -2283,6 +2314,12 @@ namespace FamiStudio
                 recordingMode = false;
                 lastRecordingKeyDown = -1;
                 StopInstrument();
+
+                if (recordingStartedSong)
+                {
+                    recordingStartedSong = false;
+                    StopSong();
+                }
                 MarkEverythingDirty();
             }
         }

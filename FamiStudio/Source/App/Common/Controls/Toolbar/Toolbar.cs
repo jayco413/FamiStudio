@@ -497,10 +497,7 @@ namespace FamiStudio
 
         private void ButtonPlay_Click(Control sender)
         {
-            if (App.IsPlaying)
-                App.StopSong();
-            else
-                App.PlaySong();
+            App.TogglePlaySong();
         }
         
         private void ButtonPlay_PointerUp(Control sender, PointerEventArgs e)
