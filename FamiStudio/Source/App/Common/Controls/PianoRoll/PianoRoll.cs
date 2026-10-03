@@ -5626,6 +5626,64 @@ namespace FamiStudio
             }
         }
 
+        private int SnapNoteNearest(int absoluteNoteIndex)
+        {
+            var lo = SnapNote(absoluteNoteIndex);
+            var hi = SnapNote(absoluteNoteIndex, true);
+            return absoluteNoteIndex - lo <= hi - absoluteNoteIndex ? lo : hi;
+        }
+
+        // Real-time recording, a note that was held from startFrame to endFrame while the song was playing.
+        public void RecordRealTimeNote(Note note, int startFrame, int endFrame)
+        {
+            if (!App.IsRecording || editMode != EditionMode.Channel || !note.IsMusical || App.UndoRedoManager.HasTransactionInProgress)
+                return;
+
+            var songEnd = Song.GetPatternStartAbsoluteNoteIndex(Song.Length);
+
+            startFrame = SnapNoteNearest(startFrame);
+            endFrame   = SnapNoteNearest(endFrame);
+
+            if (endFrame <= startFrame)
+                endFrame = Math.Max(SnapNote(startFrame, true), startFrame + 1);
+
+            endFrame = Math.Min(endFrame, songEnd);
+
+            if (startFrame < 0 || startFrame >= endFrame)
+                return;
+
+            var channel = Song.Channels[editChannel];
+            var startLocation = NoteLocation.FromAbsoluteNoteIndex(Song, startFrame);
+            var endLocation   = NoteLocation.FromAbsoluteNoteIndex(Song, endFrame - 1);
+
+            App.UndoRedoManager.BeginTransaction(TransactionScope.Channel, Song.Id, editChannel);
+
+            var pattern = channel.PatternInstances[startLocation.PatternIndex];
+            if (pattern == null)
+                pattern = channel.CreatePatternAndInstance(startLocation.PatternIndex);
+
+            // Overwrite whatever was there, but keep the effects.
+            channel.DeleteNotesBetween(startFrame, endFrame, true);
+
+            var newNote = pattern.GetOrCreateNoteAt(startLocation.NoteIndex);
+            newNote.Value = note.Value;
+            newNote.Instrument = note.Instrument;
+            newNote.Arpeggio = note.Arpeggio;
+            newNote.Duration = endFrame - startFrame;
+
+            channel.InvalidateCumulativePatternCache(startLocation.PatternIndex, endLocation.PatternIndex);
+
+            for (var p = startLocation.PatternIndex; p <= endLocation.PatternIndex; p++)
+            {
+                if (channel.PatternInstances[p] != null)
+                    PatternChanged?.Invoke(channel.PatternInstances[p]);
+            }
+
+            App.UndoRedoManager.EndTransaction();
+
+            MarkDirty();
+        }
+
         public void ToggleEffectPanel()
         {
             if (editMode == EditionMode.Channel || editMode == EditionMode.DPCM || editMode == EditionMode.Envelope && HasRepeatEnvelope())

@@ -42,6 +42,9 @@ namespace FamiStudio
         private int previewDPCMSampleRate = 44100;
         private int lastRecordingKeyDown = -1;
         private int lastPlayPosition = 0;
+        private int realTimeNoteStart = -1;
+        private int realTimeLastFrame = -1;
+        private Note realTimeNote = null;
         private bool previewDPCMIsSource = false;
         private bool metronome = false;
         private bool palPlayback = false;
@@ -1599,9 +1602,72 @@ namespace FamiStudio
             instrumentPlayer?.PlayNote(channel, note);
 
             if (allowRecording && recordingMode)
-                PianoRoll.RecordNote(note);
+            {
+                if (IsPlaying)
+                    BeginRealTimeNote(note);
+                else
+                    PianoRoll.RecordNote(note);
+            }
 
             stopInstrumentTimer = stopDelay;
+        }
+
+        // Real-time recording : when recording while the song is playing, notes are
+        // placed at the play position and last until the key is released.
+        private void BeginRealTimeNote(Note note)
+        {
+            var frame = songPlayer.PlayPosition;
+            CommitRealTimeNote(frame);
+            realTimeNote = note.Clone();
+            realTimeNoteStart = frame;
+            realTimeLastFrame = frame;
+        }
+
+        private void EndRealTimeNote()
+        {
+            if (realTimeNote != null)
+                CommitRealTimeNote(IsPlaying ? songPlayer.PlayPosition : realTimeLastFrame);
+        }
+
+        private void CommitRealTimeNote(int endFrame)
+        {
+            if (realTimeNote != null)
+            {
+                var note  = realTimeNote;
+                var start = realTimeNoteStart;
+
+                realTimeNote = null;
+                realTimeNoteStart = -1;
+                realTimeLastFrame = -1;
+
+                PianoRoll.RecordRealTimeNote(note, start, endFrame);
+            }
+        }
+
+        private void UpdateRealTimeNote()
+        {
+            if (realTimeNote != null)
+            {
+                if (!IsPlaying)
+                {
+                    // Song reached the end on its own.
+                    CommitRealTimeNote(realTimeLastFrame + 1);
+                }
+                else
+                {
+                    var frame = songPlayer.PlayPosition;
+
+                    if (frame < realTimeLastFrame)
+                    {
+                        // Song looped, end the note at the end of the song.
+                        CommitRealTimeNote(song.GetPatternStartAbsoluteNoteIndex(song.Length));
+                    }
+                    else
+                    {
+                        realTimeLastFrame = frame;
+                    }
+                }
+            }
         }
 
         public void StopOrReleaseIntrumentNote(bool allowRecording = false)
@@ -1851,6 +1917,7 @@ namespace FamiStudio
                     {
                         lastRecordingKeyDown = -1;
                         StopOrReleaseIntrumentNote(false);
+                        EndRealTimeNote();
                     }
 
                     return true;
@@ -1887,11 +1954,11 @@ namespace FamiStudio
             {
                 StopOrReleaseIntrumentNote(true);
             }
-            else if (recordingMode && Settings.QwertySkipShortcut.Matches(e))
+            else if (recordingMode && !IsPlaying && Settings.QwertySkipShortcut.Matches(e))
             {
                 PianoRoll.AdvanceRecording(CurrentFrame, true);
             }
-            else if (recordingMode && Settings.QwertyBackShortcut.Matches(e))
+            else if (recordingMode && !IsPlaying && Settings.QwertyBackShortcut.Matches(e))
             {
                 PianoRoll.DeleteRecording(CurrentFrame);
             }
@@ -2096,6 +2163,7 @@ namespace FamiStudio
                 else if (n == lastMidiNote)
                 {
                     StopOrReleaseIntrumentNote(false);
+                    EndRealTimeNote();
                     lastMidiNote = -1;
                 }
             }
@@ -2103,8 +2171,7 @@ namespace FamiStudio
 
         public void PlaySong()
         {
-            StopRecording();
-
+            // Playing while recording does real-time recording.
             if (songPlayer != null && !songPlayer.IsPlaying)
             {
                 lastPlayPosition = songPlayer.PlayPosition;
@@ -2175,6 +2242,7 @@ namespace FamiStudio
         {
             if (songPlayer != null && songPlayer.IsPlaying)
             {
+                EndRealTimeNote();
                 songPlayer.Stop();
                 instrumentPlayer.ConnectOscilloscope(oscilloscope);
                 songPlayer.ConnectOscilloscope(null);
@@ -2201,7 +2269,6 @@ namespace FamiStudio
         public void StartRecording()
         {
             Debug.Assert(!recordingMode);
-            StopSong();
             recordingMode = true;
             qwertyPiano = Platform.IsDesktop;
             MobilePianoVisible = Platform.IsMobile;
@@ -2212,6 +2279,7 @@ namespace FamiStudio
         {
             if (recordingMode)
             {
+                EndRealTimeNote();
                 recordingMode = false;
                 lastRecordingKeyDown = -1;
                 StopInstrument();
@@ -2444,6 +2512,7 @@ namespace FamiStudio
             averageTickRateMs = Utils.Lerp(averageTickRateMs, deltaTime * 1000.0f, 0.01f);
 
             ProcessAudioDeviceChanges();
+            UpdateRealTimeNote();
             ProcessQueuedMidiNotes();
             ConditionalMarkControlsDirty();
             ConditionalShowTutorial();
